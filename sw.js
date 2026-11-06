@@ -3,7 +3,7 @@
 // - La librería de transformers.js y el motor ONNX (cdn.jsdelivr.net) se cachean al usarlos.
 // - El modelo de Hugging Face NO pasa por aquí: transformers.js ya lo guarda en su propia caché.
 // Sube VERSION cuando cambies archivos de la app para limpiar cachés viejas.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const APP = 'notavoz-app-' + VERSION;
 const LIBS = 'notavoz-libs-' + VERSION;
 const SHELL = [
@@ -12,7 +12,7 @@ const SHELL = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(APP).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(APP).then(c => c.addAll(SHELL.map(u => new Request(u, {cache: 'reload'})))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {

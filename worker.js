@@ -4,27 +4,21 @@ import { pipeline } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers
 const MODEL = 'onnx-community/whisper-base';
 let asr = null;
 
+// Siempre CPU (WASM, cuantizado q8). WebGPU en móvil se colgaba en algunos
+// navegadores (p. ej. Brave en Android), así que no lo usamos.
 async function load() {
-  const progress_callback = p => postMessage({ type: 'progress', data: p });
-  let device = 'wasm';
-  // 1º intenta WebGPU (gráfica del móvil); si falla, CPU (WASM)
-  try {
-    if (navigator.gpu && await navigator.gpu.requestAdapter()) {
-      asr = await pipeline('automatic-speech-recognition', MODEL, {
-        device: 'webgpu',
-        dtype: { encoder_model: 'fp32', decoder_model_merged: 'q4' },
-        progress_callback
-      });
-      device = 'webgpu';
-    }
-  } catch (e) { asr = null; }
-  if (!asr) {
-    asr = await pipeline('automatic-speech-recognition', MODEL, {
-      device: 'wasm', dtype: 'q8', progress_callback
-    });
-  }
-  postMessage({ type: 'ready', device });
+  asr = await pipeline('automatic-speech-recognition', MODEL, {
+    device: 'wasm', dtype: 'q8',
+    progress_callback: p => postMessage({ type: 'progress', data: p })
+  });
+  postMessage({ type: 'ready', device: 'wasm', isolated: self.crossOriginIsolated === true });
 }
+
+function fail(err) {
+  postMessage({ type: 'error', message: String((err && err.message) || err) });
+}
+// Errores que escapan a los try/catch: que no se pierdan en silencio
+self.addEventListener('unhandledrejection', e => fail(e.reason));
 
 self.onmessage = async (e) => {
   const msg = e.data;
@@ -38,6 +32,6 @@ self.onmessage = async (e) => {
       postMessage({ type: 'result', text: (out.text || '').trim() });
     }
   } catch (err) {
-    postMessage({ type: 'error', message: String(err && err.message || err) });
+    fail(err);
   }
 };

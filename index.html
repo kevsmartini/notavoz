@@ -104,7 +104,7 @@ if(!IS_MOBILE) document.documentElement.classList.add('desktop');
   <div class="row">
     <div>
       <b id="engTitle">Whisper (local)</b> <span class="pill" id="engPill">no descargado</span>
-      <small id="engSub">Transcribe en tu móvil, sin enviar audio. Descarga única ~80–150 MB (mejor con WiFi).</small>
+      <small id="engSub">Transcribe en tu móvil, sin enviar audio. Descarga única de ~80 MB (mejor con WiFi).</small>
     </div>
     <button id="dlBtn">Descargar</button>
   </div>
@@ -238,7 +238,7 @@ function startWhisper(){
   dlBtn.style.display = 'none';
   bar.style.display = 'block';
   engPill.textContent = 'cargando…';
-  engSub.textContent = 'Preparando el modelo. Mientras tanto puedes usar el dictado normal.';
+  engSub.textContent = 'Preparando el modelo. Mientras tanto ' + fallbackHint() + '.';
   worker = new Worker('worker.js', {type:'module'});
   worker.onmessage = onWorker;
   worker.onerror = e => failWhisper(e.message || 'Error al iniciar Whisper');
@@ -261,16 +261,19 @@ function onWorker(e){
     askPersist(); // así el navegador tampoco borra el modelo
     bar.style.display = 'none';
     engPill.textContent = 'listo · local'; engPill.classList.add('local');
-    engSub.textContent = m.device === 'webgpu' ? 'Usando la gráfica del móvil (WebGPU). Nada sale del dispositivo.' : 'Usando la CPU (WASM). Nada sale del dispositivo.';
+    engSub.textContent = 'Listo. Transcribe en tu móvil; nada sale del dispositivo.';
+    dropOldModelFiles();
     setTimeout(() => { if(whisperReady) $('engine').style.display = 'none'; }, 2500);
   }
   if(m.type === 'result'){
-    appendText(cleanHallucinations(m.text));
-    state = 'idle'; micBtn.classList.remove('busy'); idleHint();
+    endBusy();
+    const text = cleanHallucinations(m.text);
+    appendText(text);
+    if(text) idleHint(); else setHint('No se entendió nada. Prueba a hablar más cerca.');
   }
   if(m.type === 'error'){
     if(!whisperReady) failWhisper(m.message);
-    else { state = 'idle'; micBtn.classList.remove('busy'); setHint('Error al transcribir. Prueba otra vez.'); }
+    else { endBusy(); setHint('Error al transcribir: ' + m.message); }
   }
 }
 
@@ -278,12 +281,12 @@ function failWhisper(msg){
   // Volvemos al dictado del navegador hasta que se reintente
   if(worker) worker.terminate();
   loading = false; worker = null; whisperReady = false;
-  if(state === 'busy'){ state = 'idle'; micBtn.classList.remove('busy'); }
+  if(state === 'busy') endBusy();
   $('engine').style.display = '';
   bar.style.display = 'none';
   engPill.classList.remove('local');
   engPill.textContent = 'error';
-  engSub.textContent = 'No se pudo cargar Whisper (' + msg + '). Se usará el dictado normal.';
+  engSub.textContent = 'No se pudo cargar Whisper (' + msg + '). Mientras tanto ' + fallbackHint() + '.';
   dlBtn.textContent = 'Reintentar'; dlBtn.style.display = '';
 }
 
@@ -306,9 +309,18 @@ async function modelCached(){
   try{
     if(!('caches' in window)) return null;
     const keys = (await (await caches.open('transformers-cache')).keys()).map(r => r.url);
-    const has = part => keys.some(u => u.includes('whisper-base') && u.includes(part));
-    return has('encoder_model') && has('decoder_model_merged');
+    const has = file => keys.some(u => u.includes('whisper-base') && u.endsWith('/' + file));
+    return has('encoder_model_quantized.onnx') && has('decoder_model_merged_quantized.onnx');
   }catch(e){ return null; }
+}
+
+// Versiones anteriores bajaban también archivos para WebGPU (~100 MB): los borramos
+async function dropOldModelFiles(){
+  try{
+    const cache = await caches.open('transformers-cache');
+    for(const req of await cache.keys())
+      if(req.url.includes('whisper-base') && /\/(encoder_model|decoder_model_merged_q4)\.onnx$/.test(req.url)) await cache.delete(req);
+  }catch(e){}
 }
 
 (async () => {
@@ -317,8 +329,8 @@ async function modelCached(){
   // El navegador borró el modelo: no lo bajamos otra vez sin preguntar
   flag(false, '0');
   const mobileData = navigator.connection && (navigator.connection.type === 'cellular' || navigator.connection.saveData);
-  engPill.textContent = 'borrado de la caché';
-  engSub.textContent = 'El navegador eliminó el modelo para liberar espacio. Volver a descargarlo ocupa ~80–150 MB'
+  engPill.textContent = 'falta el modelo';
+  engSub.textContent = 'Hay que descargar el modelo otra vez (el navegador lo borró o la app lo ha cambiado). Ocupa ~80 MB'
     + (mobileData ? ' y parece que estás con datos móviles.' : ' (mejor con WiFi).');
   dlBtn.textContent = 'Volver a descargar';
 })();
@@ -357,8 +369,8 @@ async function processAudio(){
   chunks = []; // el audio solo vive en memoria y se descarta
   recMode = null;
   if(dur < 600){ state = 'idle'; idleHint(); return; }
-  if(!worker || !whisperReady){ state = 'idle'; setHint('Whisper no está disponible. Toca para usar el dictado normal.'); return; }
-  state = 'busy'; micBtn.classList.add('busy'); setHint('Transcribiendo…');
+  if(!worker || !whisperReady){ state = 'idle'; setHint('Whisper no está disponible: ' + fallbackHint()); return; }
+  startBusy(dur);
   let ctx = null;
   try{
     ctx = new (window.AudioContext || window.webkitAudioContext)({sampleRate:16000});
@@ -366,14 +378,43 @@ async function processAudio(){
     const audio = buf.getChannelData(0).slice();
     worker.postMessage({type:'transcribe', audio}, [audio.buffer]);
   }catch(e){
-    state = 'idle'; micBtn.classList.remove('busy'); setHint('No se pudo procesar el audio');
+    endBusy(); setHint('No se pudo procesar el audio');
   }finally{
     if(ctx) ctx.close().catch(() => {});
   }
 }
 
+// Mientras transcribe: contador visible y límite de tiempo.
+// En CPU tarda más o menos lo que dura la grabación (más la primera vez).
+let busyTimer = null, busyStart = 0;
+function startBusy(audioMs){
+  state = 'busy'; micBtn.classList.add('busy'); busyStart = Date.now();
+  const limit = Math.max(90, Math.ceil(audioMs / 1000) * 8); // segundos
+  clearInterval(busyTimer);
+  busyTimer = setInterval(() => {
+    const s = Math.floor((Date.now() - busyStart) / 1000);
+    if(s >= limit){ abortTranscription('Tardó demasiado (' + s + ' s). Prueba con una grabación más corta.'); return; }
+    setHint(`Transcribiendo… ${s} s · toca para cancelar`);
+  }, 250);
+  setHint('Transcribiendo… · toca para cancelar');
+}
+function endBusy(){
+  clearInterval(busyTimer); busyTimer = null;
+  state = 'idle'; micBtn.classList.remove('busy');
+}
+// La única forma de parar Whisper a medias es cerrar el worker y cargarlo de nuevo (desde caché)
+function abortTranscription(msg){
+  endBusy();
+  if(worker) worker.terminate();
+  worker = null; whisperReady = false; loading = false;
+  startWhisper();
+  setHint(msg);
+}
+
 /* ---------- Alternativa: dictado del navegador ---------- */
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function fallbackHint(){ return SR ? 'puedes usar el dictado del navegador' : 'usa el micro del teclado'; }
+// Brave expone la API de dictado pero siempre falla: allí no la ofrecemos
+const SR = navigator.brave ? null : (window.SpeechRecognition || window.webkitSpeechRecognition);
 let sr = null, srBase = '';
 if(SR){
   sr = new SR();
@@ -409,7 +450,7 @@ if(SR){
 let recMode = null; // 'sr' | 'whisper' mientras se graba
 
 micBtn.onclick = () => {
-  if(state === 'busy') return;
+  if(state === 'busy'){ abortTranscription('Cancelado'); return; }
   // Si ya grabamos, paramos con el mismo motor con el que empezamos
   if(state === 'rec'){
     if(recMode === 'whisper') stopWhisperRec();
