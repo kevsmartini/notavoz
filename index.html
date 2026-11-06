@@ -125,9 +125,6 @@ if(!IS_MOBILE) document.documentElement.classList.add('desktop');
     <span><b>Preciso</b> · ~80 MB<small>Entiende mejor nombres y palabras poco comunes. Más lento.</small></span></label>
   <label class="opt"><input type="radio" name="model" value="whisper-tiny">
     <span><b>Rápido</b> · ~40 MB<small>Unas 2–3 veces más rápido, pero se equivoca más.</small></span></label>
-  <h2 style="margin-top:14px">Motor</h2>
-  <label class="opt"><input type="checkbox" id="gpuChk">
-    <span><b>Usar la gráfica</b> · experimental<small id="gpuNote">Puede ser bastante más rápido. Descarga un archivo extra. Si falla, vuelve sola a la CPU.</small></span></label>
   <small class="diag" id="diag"></small>
 </section>
 
@@ -276,21 +273,19 @@ function appendText(t){
 let worker = null, whisperReady = false, loading = false;
 let files = {}, curThreads = 1, loadWatch = null;
 // Si la carga pasa 45 s sin dar señales, la damos por colgada
-// (con la gráfica damos más margen: la primera vez compila sus programas)
-function watchLoad(){ clearTimeout(loadWatch); loadWatch = setTimeout(() => failWhisper('se quedó colgado al cargar'), curGpu ? 90000 : 45000); }
+function watchLoad(){ clearTimeout(loadWatch); loadWatch = setTimeout(() => failWhisper('se quedó colgado al cargar'), 45000); }
 
 const MODELS = {
-  'whisper-base': { name: 'Preciso', mb: 80, gpuMb: 80 }, // gpuMb: codificador fp32 extra
-  'whisper-tiny': { name: 'Rápido', mb: 40, gpuMb: 35 }
+  'whisper-base': { name: 'Preciso', mb: 80 },
+  'whisper-tiny': { name: 'Rápido', mb: 40 }
 };
 function getModel(){ try{ const m = localStorage.getItem('notavoz.model'); return MODELS[m] ? m : 'whisper-base'; }catch(e){ return 'whisper-base'; } }
 function setModel(m){ try{ localStorage.setItem('notavoz.model', m); }catch(e){} }
 // Varios núcleos solo si la página está aislada (lo hace sw.js) y no falló antes
 function threadsOff(set){ try{ return set ? localStorage.setItem('notavoz.threads', 'off') : localStorage.getItem('notavoz.threads') === 'off'; }catch(e){ return false; } }
 function wantThreads(){ return (self.crossOriginIsolated && !threadsOff()) ? 4 : 1; }
-// Gráfica (WebGPU, experimental): 'on' | 'off' | 'failed'
-function gpuPref(v){ try{ if(v) localStorage.setItem('notavoz.gpu', v); return localStorage.getItem('notavoz.gpu') || 'off'; }catch(e){ return 'off'; } }
-let curGpu = false;
+// La opción de usar la gráfica se quitó (daba texto sin sentido): limpiamos su ajuste
+try{ localStorage.removeItem('notavoz.gpu'); }catch(e){}
 // Cierra Whisper y lo vuelve a cargar con los ajustes actuales
 function restartWhisper(){
   if(worker) worker.terminate();
@@ -301,7 +296,7 @@ const engTitle = $('engTitle'), engPill = $('engPill'), engSub = $('engSub'), dl
 
 function startWhisper(){
   if(worker || loading) return;
-  loading = true; files = {}; curThreads = wantThreads(); curGpu = gpuPref() === 'on';
+  loading = true; files = {}; curThreads = wantThreads();
   $('engine').style.display = '';
   dlBtn.style.display = 'none';
   bar.style.display = 'block'; barFill.style.width = '0';
@@ -310,7 +305,7 @@ function startWhisper(){
   worker = new Worker('worker.js', {type:'module'});
   worker.onmessage = onWorker;
   worker.onerror = e => failWhisper(e.message || 'Error al iniciar Whisper');
-  worker.postMessage({type:'load', model: getModel(), threads: curThreads, gpu: curGpu});
+  worker.postMessage({type:'load', model: getModel(), threads: curThreads});
   watchLoad();
 }
 
@@ -335,7 +330,7 @@ function onWorker(e){
     askPersist(); // así el navegador tampoco borra el modelo
     bar.style.display = 'none';
     engPill.textContent = 'listo · local'; engPill.classList.add('local');
-    engSub.textContent = `Listo · modelo ${MODELS[m.model].name.toLowerCase()} · ${m.gpu ? 'gráfica + ' : ''}${coresText()}. Nada sale del dispositivo.`;
+    engSub.textContent = `Listo · modelo ${MODELS[m.model].name.toLowerCase()} · ${coresText()}. Nada sale del dispositivo.`;
     updateDiag();
     dropOldModelFiles();
     setTimeout(() => { if(whisperReady) $('engine').style.display = 'none'; }, 2500);
@@ -358,8 +353,6 @@ function failWhisper(msg){
   loading = false; worker = null; whisperReady = false;
   clearTimeout(loadWatch);
   if(state === 'busy'){ endBusy(); setHint('Whisper se cerró. Prueba otra vez en unos segundos.'); }
-  // Si falló con la gráfica, la apagamos y volvemos a CPU
-  if(curGpu){ gpuPref('failed'); syncGpuChk(); startWhisper(); if(state === 'idle') setHint('La gráfica falló en este móvil; vuelvo a la CPU'); return; }
   // Si falló con varios núcleos, lo apagamos para siempre y reintentamos con uno
   if(curThreads > 1){ threadsOff(true); startWhisper(); return; }
   // Volvemos al dictado del navegador hasta que se reintente
@@ -389,7 +382,7 @@ engSub.textContent = `Transcribe en tu móvil, sin enviar audio. Descarga única
 const gear = $('gear'), settings = $('settings');
 function coresText(){ return curThreads > 1 ? `${curThreads} núcleos` : '1 núcleo'; }
 function updateDiag(){
-  let t = whisperReady ? `Usando ${curGpu ? 'la gráfica y ' : ''}${coresText()} del procesador.` : 'Whisper no está cargado.';
+  let t = whisperReady ? `Usando ${coresText()} del procesador.` : 'Whisper no está cargado.';
   if(whisperReady && curThreads === 1)
     t += threadsOff() ? ' El modo multinúcleo falló en este móvil.'
        : !self.crossOriginIsolated ? ' El multinúcleo se activa al volver a abrir la app.' : '';
@@ -407,29 +400,10 @@ document.querySelectorAll('input[name=model]').forEach(r => {
     if(state !== 'idle'){ r.checked = false; document.querySelector(`input[value="${getModel()}"]`).checked = true; setHint('Espera a que termine para cambiar de modelo'); return; }
     setModel(r.value);
     // Cambiar de modelo es una decisión explícita: lo cargamos (y descargamos si hace falta)
-    restartWhisper(); syncGpuChk();
+    restartWhisper();
   };
 });
 
-const gpuChk = $('gpuChk'), gpuNote = $('gpuNote');
-function syncGpuChk(){
-  gpuChk.checked = gpuPref() === 'on';
-  if(gpuChk.disabled) return;
-  gpuNote.textContent = gpuPref() === 'failed'
-    ? 'Falló en este móvil y se volvió a la CPU. Puedes intentarlo otra vez.'
-    : `Puede ser bastante más rápido. Descarga ~${MODELS[getModel()].gpuMb} MB más. Si falla, vuelve sola a la CPU.`;
-}
-syncGpuChk();
-(async () => {
-  let ok = false;
-  try{ ok = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }catch(e){}
-  if(!ok){ gpuChk.disabled = true; gpuChk.checked = false; gpuNote.textContent = 'Este navegador no ofrece WebGPU.'; }
-})();
-gpuChk.onchange = () => {
-  if(state !== 'idle'){ syncGpuChk(); setHint('Espera a que termine para cambiar el motor'); return; }
-  gpuPref(gpuChk.checked ? 'on' : 'off'); syncGpuChk();
-  restartWhisper();
-};
 
 // ¿Siguen los archivos del modelo en la caché de transformers.js?
 // true = sí, false = no, null = no se puede saber
@@ -438,16 +412,14 @@ async function modelCached(){
     if(!('caches' in window)) return null;
     const keys = (await (await caches.open('transformers-cache')).keys()).map(r => r.url);
     const has = file => keys.some(u => u.includes('/onnx-community/' + getModel() + '/') && u.endsWith('/' + file));
-    const encoder = gpuPref() === 'on' ? 'encoder_model.onnx' : 'encoder_model_quantized.onnx';
-    return has(encoder) && has('decoder_model_merged_quantized.onnx');
+    return has('encoder_model_quantized.onnx') && has('decoder_model_merged_quantized.onnx');
   }catch(e){ return null; }
 }
 
-// Borra archivos que ya no se usan: el decodificador q4 de versiones antiguas y,
-// si la gráfica está apagada, su codificador fp32 (~35–80 MB)
+// Borra archivos de la gráfica (WebGPU) que bajaron versiones anteriores (~35–100 MB)
 async function dropOldModelFiles(){
   try{
-    const re = gpuPref() === 'on' ? /\/decoder_model_merged_q4\.onnx$/ : /\/(encoder_model|decoder_model_merged_q4)\.onnx$/;
+    const re = /\/(encoder_model|decoder_model_merged_q4)\.onnx$/;
     const cache = await caches.open('transformers-cache');
     for(const req of await cache.keys())
       if(req.url.includes('/onnx-community/whisper-') && re.test(req.url)) await cache.delete(req);
@@ -522,14 +494,12 @@ async function processAudio(){
 let busyTimer = null, busyStart = 0;
 function startBusy(audioMs){
   state = 'busy'; micBtn.classList.add('busy'); busyStart = Date.now();
-  const limit = curGpu ? Math.max(40, Math.ceil(audioMs / 1000) * 4) : Math.max(90, Math.ceil(audioMs / 1000) * 8); // segundos
+  const limit = Math.max(90, Math.ceil(audioMs / 1000) * 8); // segundos
   clearInterval(busyTimer);
   busyTimer = setInterval(() => {
     const s = Math.floor((Date.now() - busyStart) / 1000);
     if(s >= limit){
-      // Si se colgó usando la gráfica, la apagamos para no repetir
-      if(curGpu){ gpuPref('failed'); syncGpuChk(); abortTranscription('La gráfica se quedó colgada; vuelvo a la CPU. Graba otra vez.'); }
-      else abortTranscription('Tardó demasiado (' + s + ' s). Prueba con una grabación más corta.');
+      abortTranscription('Tardó demasiado (' + s + ' s). Prueba con una grabación más corta.');
       return;
     }
     setHint(`Transcribiendo… ${s} s`);

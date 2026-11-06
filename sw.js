@@ -5,7 +5,7 @@
 // - Añade a la app las cabeceras COOP/COEP (GitHub Pages no deja configurarlas). Con ellas la
 //   página queda "aislada" (crossOriginIsolated) y Whisper puede usar varios núcleos.
 // Sube VERSION cuando cambies archivos de la app para limpiar cachés viejas.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const APP = 'notavoz-app-' + VERSION;
 const LIBS = 'notavoz-libs-' + VERSION;
 const SHELL = [
