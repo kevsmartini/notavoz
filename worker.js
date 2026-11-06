@@ -3,14 +3,23 @@ import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transfo
 
 let asr = null;
 
-// Siempre CPU (WASM, cuantizado q8). WebGPU en móvil se colgaba en algunos
-// navegadores (p. ej. Brave en Android), así que no lo usamos.
+// Por defecto todo en CPU (WASM, cuantizado q8).
+// Con gpu = true (experimental) es híbrido: el codificador, que es la parte pesada
+// (procesa siempre 30 s de audio), va en la gráfica en fp32; el decodificador sigue
+// en CPU en q8. El decodificador q4 en WebGPU se colgaba en móvil, por eso no se usa.
 // threads > 1 solo funciona si la página está aislada (crossOriginIsolated);
 // el número de hilos no se puede cambiar después: para cambiarlo hay que crear otro worker.
-async function load(model, threads) {
+async function load(model, threads, gpu) {
   env.backends.onnx.wasm.numThreads = threads;
+  if (gpu && !(navigator.gpu && await navigator.gpu.requestAdapter())) {
+    throw new Error('WebGPU no está disponible en este navegador');
+  }
+  const engine = gpu
+    ? { device: { encoder_model: 'webgpu', decoder_model_merged: 'wasm' },
+        dtype:  { encoder_model: 'fp32',   decoder_model_merged: 'q8' } }
+    : { device: 'wasm', dtype: 'q8' };
   asr = await pipeline('automatic-speech-recognition', 'onnx-community/' + model, {
-    device: 'wasm', dtype: 'q8',
+    ...engine,
     progress_callback: p => postMessage({ type: 'progress', data: p })
   });
   // Calentamiento: la primera transcripción tarda unos segundos más porque el motor
@@ -18,7 +27,7 @@ async function load(model, threads) {
   // nota real vaya igual de rápida que las demás. El resultado se descarta.
   postMessage({ type: 'warming' });
   try { await asr(new Float32Array(16000), { language: 'spanish', task: 'transcribe' }); } catch (e) {}
-  postMessage({ type: 'ready', model, threads });
+  postMessage({ type: 'ready', model, threads, gpu });
 }
 
 function fail(err) {
@@ -30,7 +39,7 @@ self.addEventListener('unhandledrejection', e => fail(e.reason));
 self.onmessage = async (e) => {
   const msg = e.data;
   try {
-    if (msg.type === 'load') await load(msg.model, msg.threads);
+    if (msg.type === 'load') await load(msg.model, msg.threads, msg.gpu);
     if (msg.type === 'transcribe') {
       const out = await asr(msg.audio, {
         language: 'spanish', task: 'transcribe',
