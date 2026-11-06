@@ -2,8 +2,10 @@
 // - La app (HTML, worker, iconos) se sirve desde caché y se actualiza en segundo plano.
 // - La librería de transformers.js y el motor ONNX (cdn.jsdelivr.net) se cachean al usarlos.
 // - El modelo de Hugging Face NO pasa por aquí: transformers.js ya lo guarda en su propia caché.
+// - Añade a la app las cabeceras COOP/COEP (GitHub Pages no deja configurarlas). Con ellas la
+//   página queda "aislada" (crossOriginIsolated) y Whisper puede usar varios núcleos.
 // Sube VERSION cuando cambies archivos de la app para limpiar cachés viejas.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const APP = 'notavoz-app-' + VERSION;
 const LIBS = 'notavoz-libs-' + VERSION;
 const SHELL = [
@@ -34,6 +36,15 @@ async function staleWhileRevalidate(req, cacheName, cacheKey = req){
   return hit || (await net) || Response.error();
 }
 
+function withIsolation(res){
+  if(!res || res.status === 0) return res;
+  const h = new Headers(res.headers);
+  h.set('Cross-Origin-Opener-Policy', 'same-origin');
+  h.set('Cross-Origin-Embedder-Policy', 'require-corp');
+  h.set('Cross-Origin-Resource-Policy', 'same-origin');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 self.addEventListener('fetch', e => {
   const req = e.request;
   if(req.method !== 'GET') return;
@@ -42,7 +53,7 @@ self.addEventListener('fetch', e => {
   if(url.origin === location.origin){
     // Cualquier navegación dentro de la app cae en index.html
     const key = req.mode === 'navigate' ? './index.html' : req;
-    e.respondWith(staleWhileRevalidate(req, APP, key));
+    e.respondWith(staleWhileRevalidate(req, APP, key).then(withIsolation));
     return;
   }
   if(url.hostname === 'cdn.jsdelivr.net'){

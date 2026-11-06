@@ -81,6 +81,16 @@ if(!IS_MOBILE) document.documentElement.classList.add('desktop');
          border-radius:12px;padding:10px 10px 10px 16px;font-size:14px;display:none;align-items:center;gap:12px;box-shadow:0 6px 24px rgba(0,0,0,.4);z-index:5}
   .toast.show{display:flex}
   .toast button{background:none;border:none;color:var(--acc);font-weight:700;font-size:14px;padding:6px 8px}
+  .tools{display:flex;gap:8px;align-items:center}
+  .gear{background:none;border:1px solid var(--line);color:var(--muted);width:32px;height:32px;border-radius:50%;font-size:16px;line-height:1}
+  .gear.on{background:var(--txt);color:var(--bg);border-color:var(--txt)}
+  .settings{margin:6px 14px 0;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:14px}
+  .settings[hidden]{display:none}
+  .settings h2{font-size:14px;font-weight:600;margin-bottom:8px}
+  .opt{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)}
+  .opt input{margin-top:4px;accent-color:var(--acc);width:18px;height:18px}
+  .opt small, .diag{color:var(--muted);display:block;font-size:12px;margin-top:2px}
+  .diag{margin-top:8px}
   .hint{text-align:center;font-size:12px;color:var(--muted);margin-top:8px;min-height:16px}
 </style>
 </head>
@@ -94,11 +104,23 @@ if(!IS_MOBILE) document.documentElement.classList.add('desktop');
 <script>document.getElementById('desktopUrl').textContent = location.href.split('#')[0];</script>
 <header>
   <h1>notavoz</h1>
-  <div class="filters">
-    <button data-f="pending" class="on">Pendientes</button>
-    <button data-f="all">Todas</button>
+  <div class="tools">
+    <div class="filters">
+      <button data-f="pending" class="on">Pendientes</button>
+      <button data-f="all">Todas</button>
+    </div>
+    <button class="gear" id="gear" aria-label="Ajustes" aria-expanded="false">⚙</button>
   </div>
 </header>
+
+<section class="settings" id="settings" hidden>
+  <h2>Modelo de voz</h2>
+  <label class="opt"><input type="radio" name="model" value="whisper-base">
+    <span><b>Preciso</b> · ~80 MB<small>Entiende mejor nombres y palabras poco comunes. Más lento.</small></span></label>
+  <label class="opt"><input type="radio" name="model" value="whisper-tiny">
+    <span><b>Rápido</b> · ~40 MB<small>Unas 2–3 veces más rápido, pero se equivoca más.</small></span></label>
+  <small class="diag" id="diag"></small>
+</section>
 
 <section class="engine" id="engine">
   <div class="row">
@@ -229,24 +251,39 @@ function appendText(t){
 
 /* ---------- Whisper (worker) ---------- */
 let worker = null, whisperReady = false, loading = false;
-const files = {};
+let files = {}, curThreads = 1, loadWatch = null;
+// Si la carga pasa 45 s sin dar señales, la damos por colgada
+function watchLoad(){ clearTimeout(loadWatch); loadWatch = setTimeout(() => failWhisper('se quedó colgado al cargar'), 45000); }
+
+const MODELS = {
+  'whisper-base': { name: 'Preciso', mb: 80 },
+  'whisper-tiny': { name: 'Rápido', mb: 40 }
+};
+function getModel(){ try{ const m = localStorage.getItem('notavoz.model'); return MODELS[m] ? m : 'whisper-base'; }catch(e){ return 'whisper-base'; } }
+function setModel(m){ try{ localStorage.setItem('notavoz.model', m); }catch(e){} }
+// Varios núcleos solo si la página está aislada (lo hace sw.js) y no falló antes
+function threadsOff(set){ try{ return set ? localStorage.setItem('notavoz.threads', 'off') : localStorage.getItem('notavoz.threads') === 'off'; }catch(e){ return false; } }
+function wantThreads(){ return (self.crossOriginIsolated && !threadsOff()) ? 4 : 1; }
 const engTitle = $('engTitle'), engPill = $('engPill'), engSub = $('engSub'), dlBtn = $('dlBtn'), bar = $('bar'), barFill = $('barFill');
 
 function startWhisper(){
   if(worker || loading) return;
-  loading = true;
+  loading = true; files = {}; curThreads = wantThreads();
+  $('engine').style.display = '';
   dlBtn.style.display = 'none';
-  bar.style.display = 'block';
+  bar.style.display = 'block'; barFill.style.width = '0';
   engPill.textContent = 'cargando…';
   engSub.textContent = 'Preparando el modelo. Mientras tanto ' + fallbackHint() + '.';
   worker = new Worker('worker.js', {type:'module'});
   worker.onmessage = onWorker;
   worker.onerror = e => failWhisper(e.message || 'Error al iniciar Whisper');
-  worker.postMessage({type:'load'});
+  worker.postMessage({type:'load', model: getModel(), threads: curThreads});
+  watchLoad();
 }
 
 function onWorker(e){
   const m = e.data;
+  if(m.type === 'progress' && loading) watchLoad();
   if(m.type === 'progress' && m.data.status === 'progress' && m.data.total){
     files[m.data.file] = m.data;
     let loaded = 0, total = 0;
@@ -256,20 +293,22 @@ function onWorker(e){
     engSub.textContent = `Descargando… ${(loaded/1048576).toFixed(0)} / ${(total/1048576).toFixed(0)} MB`;
   }
   if(m.type === 'ready'){
-    whisperReady = true; loading = false;
+    whisperReady = true; loading = false; clearTimeout(loadWatch);
     flag(false, '1');
     askPersist(); // así el navegador tampoco borra el modelo
     bar.style.display = 'none';
     engPill.textContent = 'listo · local'; engPill.classList.add('local');
-    engSub.textContent = 'Listo. Transcribe en tu móvil; nada sale del dispositivo.';
+    engSub.textContent = `Listo · modelo ${MODELS[m.model].name.toLowerCase()} · ${coresText()}. Nada sale del dispositivo.`;
+    updateDiag();
     dropOldModelFiles();
     setTimeout(() => { if(whisperReady) $('engine').style.display = 'none'; }, 2500);
   }
   if(m.type === 'result'){
+    const secs = ((Date.now() - busyStart) / 1000).toFixed(1).replace('.', ',');
     endBusy();
     const text = cleanHallucinations(m.text);
     appendText(text);
-    if(text) idleHint(); else setHint('No se entendió nada. Prueba a hablar más cerca.');
+    setHint(text ? `Transcrito en ${secs} s · revisa y pulsa Guardar` : 'No se entendió nada. Prueba a hablar más cerca.');
   }
   if(m.type === 'error'){
     if(!whisperReady) failWhisper(m.message);
@@ -278,10 +317,13 @@ function onWorker(e){
 }
 
 function failWhisper(msg){
-  // Volvemos al dictado del navegador hasta que se reintente
   if(worker) worker.terminate();
   loading = false; worker = null; whisperReady = false;
-  if(state === 'busy') endBusy();
+  clearTimeout(loadWatch);
+  if(state === 'busy'){ endBusy(); setHint('Whisper se cerró. Prueba otra vez en unos segundos.'); }
+  // Si falló con varios núcleos, lo apagamos para siempre y reintentamos con uno
+  if(curThreads > 1){ threadsOff(true); startWhisper(); return; }
+  // Volvemos al dictado del navegador hasta que se reintente
   $('engine').style.display = '';
   bar.style.display = 'none';
   engPill.classList.remove('local');
@@ -302,6 +344,35 @@ function cleanHallucinations(t){
 }
 
 dlBtn.onclick = startWhisper;
+engSub.textContent = `Transcribe en tu móvil, sin enviar audio. Descarga única de ~${MODELS[getModel()].mb} MB (mejor con WiFi).`;
+
+/* ---------- Ajustes ---------- */
+const gear = $('gear'), settings = $('settings');
+function coresText(){ return curThreads > 1 ? `${curThreads} núcleos` : '1 núcleo'; }
+function updateDiag(){
+  let t = whisperReady ? `Usando ${coresText()} del procesador.` : 'Whisper no está cargado.';
+  if(whisperReady && curThreads === 1)
+    t += threadsOff() ? ' El modo multinúcleo falló en este móvil.'
+       : !self.crossOriginIsolated ? ' El multinúcleo se activa al volver a abrir la app.' : '';
+  $('diag').textContent = t;
+}
+gear.onclick = () => {
+  settings.hidden = !settings.hidden;
+  gear.classList.toggle('on', !settings.hidden);
+  gear.setAttribute('aria-expanded', String(!settings.hidden));
+  updateDiag();
+};
+document.querySelectorAll('input[name=model]').forEach(r => {
+  r.checked = r.value === getModel();
+  r.onchange = () => {
+    if(state !== 'idle'){ r.checked = false; document.querySelector(`input[value="${getModel()}"]`).checked = true; setHint('Espera a que termine para cambiar de modelo'); return; }
+    setModel(r.value);
+    // Cambiar de modelo es una decisión explícita: lo cargamos (y descargamos si hace falta)
+    if(worker) worker.terminate();
+    worker = null; whisperReady = false; loading = false;
+    startWhisper(); updateDiag();
+  };
+});
 
 // ¿Siguen los archivos del modelo en la caché de transformers.js?
 // true = sí, false = no, null = no se puede saber
@@ -309,7 +380,7 @@ async function modelCached(){
   try{
     if(!('caches' in window)) return null;
     const keys = (await (await caches.open('transformers-cache')).keys()).map(r => r.url);
-    const has = file => keys.some(u => u.includes('whisper-base') && u.endsWith('/' + file));
+    const has = file => keys.some(u => u.includes('/onnx-community/' + getModel() + '/') && u.endsWith('/' + file));
     return has('encoder_model_quantized.onnx') && has('decoder_model_merged_quantized.onnx');
   }catch(e){ return null; }
 }
@@ -330,7 +401,7 @@ async function dropOldModelFiles(){
   flag(false, '0');
   const mobileData = navigator.connection && (navigator.connection.type === 'cellular' || navigator.connection.saveData);
   engPill.textContent = 'falta el modelo';
-  engSub.textContent = 'Hay que descargar el modelo otra vez (el navegador lo borró o la app lo ha cambiado). Ocupa ~80 MB'
+  engSub.textContent = `Hay que descargar el modelo otra vez (el navegador lo borró o la app lo ha cambiado). Ocupa ~${MODELS[getModel()].mb} MB`
     + (mobileData ? ' y parece que estás con datos móviles.' : ' (mejor con WiFi).');
   dlBtn.textContent = 'Volver a descargar';
 })();
@@ -404,7 +475,7 @@ function endBusy(){
 }
 // La única forma de parar Whisper a medias es cerrar el worker y cargarlo de nuevo (desde caché)
 function abortTranscription(msg){
-  endBusy();
+  endBusy(); clearTimeout(loadWatch);
   if(worker) worker.terminate();
   worker = null; whisperReady = false; loading = false;
   startWhisper();
@@ -469,6 +540,17 @@ render();
 /* ---------- Sin conexión ---------- */
 if('serviceWorker' in navigator && location.protocol !== 'file:'){
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  // Las cabeceras que permiten usar varios núcleos las pone sw.js, así que solo valen
+  // cuando la página se carga a través de él. Si no es así, recargamos (máx. 2 veces por sesión).
+  const maybeReload = () => {
+    if(self.crossOriginIsolated || !navigator.serviceWorker.controller || state !== 'idle') return;
+    let n = 0; try{ n = +sessionStorage.getItem('notavoz.coi') || 0; }catch(e){}
+    if(n >= 2) return;
+    try{ sessionStorage.setItem('notavoz.coi', n + 1); }catch(e){ return; }
+    location.reload();
+  };
+  navigator.serviceWorker.ready.then(maybeReload);
+  navigator.serviceWorker.addEventListener('controllerchange', maybeReload);
 }
 </script>
 </body>
