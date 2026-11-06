@@ -13,6 +13,11 @@ async function load(model, threads) {
     device: 'wasm', dtype: 'q8',
     progress_callback: p => postMessage({ type: 'progress', data: p })
   });
+  // Calentamiento: la primera transcripción tarda unos segundos más porque el motor
+  // prepara sus cálculos. La hacemos ya, con 1 s de silencio, para que la primera
+  // nota real vaya igual de rápida que las demás. El resultado se descarta.
+  postMessage({ type: 'warming' });
+  try { await asr(new Float32Array(16000), { language: 'spanish', task: 'transcribe' }); } catch (e) {}
   postMessage({ type: 'ready', model, threads });
 }
 
