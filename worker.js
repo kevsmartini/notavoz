@@ -1,5 +1,11 @@
 // Whisper corre aquí, en segundo plano (Web Worker)
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+// Todo se sirve desde la propia web (versión fija): ni CDN ni Hugging Face.
+import { pipeline, env } from './vendor/transformers-3.8.1/transformers.min.js';
+
+env.allowRemoteModels = false;                 // nunca descargar de huggingface.co
+env.allowLocalModels = true;
+env.localModelPath = './models/';              // models/onnx-community/<modelo>/
+env.backends.onnx.wasm.wasmPaths = new URL('./vendor/transformers-3.8.1/', self.location).href;
 
 let asr = null;
 
