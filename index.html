@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="notavoz">
+<meta name="theme-color" content="#111214">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>notavoz</title>
+<script>
+// notavoz es solo para móvil. En ordenador se muestra un aviso en lugar de la app.
+// (iPad con iPadOS se anuncia como Mac: lo detectamos por la pantalla táctil.)
+window.IS_MOBILE = (navigator.userAgentData && navigator.userAgentData.mobile)
+  || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+  || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+if(!IS_MOBILE) document.documentElement.classList.add('desktop');
+</script>
+<style>
+  :root{
+    --bg:#111214; --card:#1b1d21; --line:#2a2d33; --txt:#ececec; --muted:#8b9099;
+    --acc:#ff5a4e; --ok:#4cc38a; --info:#6aa8ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  #desktop{display:none}
+  .desktop body{padding:0}
+  .desktop body > *:not(#desktop){display:none !important}
+  .desktop #desktop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+                    min-height:100vh;padding:24px;text-align:center}
+  #desktop img{width:96px;height:96px;border-radius:22px}
+  #desktop p{color:var(--muted);max-width:340px}
+  #desktop code{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;color:var(--txt);word-break:break-all}
+  body{background:var(--bg);color:var(--txt);font:16px/1.45 -apple-system,system-ui,"Segoe UI",Roboto,sans-serif;
+       min-height:100vh;padding:env(safe-area-inset-top) 0 calc(200px + env(safe-area-inset-bottom))}
+  header{padding:20px 18px 8px;display:flex;justify-content:space-between;align-items:center}
+  h1{font-size:26px;letter-spacing:-.5px}
+  .filters{display:flex;gap:6px}
+  .filters button{background:none;border:1px solid var(--line);color:var(--muted);padding:5px 11px;border-radius:99px;font-size:13px}
+  .filters button.on{background:var(--txt);color:var(--bg);border-color:var(--txt)}
+  main{padding:0 14px}
+
+  .engine{margin:6px 14px 0;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;font-size:14px}
+  .engine .row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .engine b{font-weight:600}
+  .engine small{color:var(--muted);display:block;margin-top:3px}
+  .engine button{background:var(--info);color:#0b1220;border:none;border-radius:10px;padding:8px 12px;font-weight:600;font-size:13px;white-space:nowrap}
+  .bar{height:6px;background:var(--line);border-radius:99px;margin-top:10px;overflow:hidden;display:none}
+  .bar i{display:block;height:100%;width:0;background:var(--info);transition:width .2s}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+  .pill.local{color:var(--ok);border-color:var(--ok)}
+
+  .day{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:22px 4px 8px}
+  .note{background:var(--card);border-radius:14px;padding:13px 14px;margin-bottom:8px;display:flex;gap:12px;align-items:flex-start}
+  .note.done .text{text-decoration:line-through;color:var(--muted)}
+  .chk{flex:none;width:22px;height:22px;border-radius:50%;border:2px solid var(--muted);background:none;margin-top:1px}
+  .done .chk{background:var(--ok);border-color:var(--ok)}
+  .body{flex:1;min-width:0}
+  .text{white-space:pre-wrap;word-wrap:break-word}
+  .time{font-size:12px;color:var(--muted);margin-top:4px}
+  .del{background:none;border:none;color:var(--muted);font-size:20px;line-height:1;padding:0 2px}
+  .empty{text-align:center;color:var(--muted);margin-top:60px}
+
+  .dock{position:fixed;left:0;right:0;bottom:0;background:linear-gradient(transparent,var(--bg) 22%);
+        padding:28px 14px calc(16px + env(safe-area-inset-bottom))}
+  .compose{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:10px;display:flex;gap:10px;align-items:flex-end}
+  textarea{flex:1;background:none;border:none;color:var(--txt);font:inherit;resize:none;outline:none;max-height:140px;min-height:24px;padding:6px 4px}
+  .save{background:var(--txt);color:var(--bg);border:none;border-radius:12px;padding:9px 14px;font-weight:600}
+  .save:disabled{opacity:.3}
+  .mic{display:block;margin:14px auto 0;width:72px;height:72px;border-radius:50%;border:none;background:var(--acc);
+       box-shadow:0 6px 24px rgba(255,90,78,.35)}
+  .mic svg{width:30px;height:30px;fill:#fff}
+  .mic.rec{animation:pulse 1.2s infinite}
+  .mic.busy{background:var(--line);box-shadow:none}
+  .mic.busy svg{animation:spin 1s linear infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,90,78,.6)}100%{box-shadow:0 0 0 22px rgba(255,90,78,0)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .toast{position:fixed;left:50%;bottom:calc(190px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--txt);color:var(--bg);
+         border-radius:12px;padding:10px 10px 10px 16px;font-size:14px;display:none;align-items:center;gap:12px;box-shadow:0 6px 24px rgba(0,0,0,.4);z-index:5}
+  .toast.show{display:flex}
+  .toast button{background:none;border:none;color:var(--acc);font-weight:700;font-size:14px;padding:6px 8px}
+  .hint{text-align:center;font-size:12px;color:var(--muted);margin-top:8px;min-height:16px}
+</style>
+</head>
+<body>
+<div id="desktop">
+  <img src="icons/icon-192.png" alt="">
+  <h1>notavoz es una app para el móvil</h1>
+  <p>Abre esta dirección en el navegador de tu teléfono y añádela a la pantalla de inicio:</p>
+  <code id="desktopUrl"></code>
+</div>
+<script>document.getElementById('desktopUrl').textContent = location.href.split('#')[0];</script>
+<header>
+  <h1>notavoz</h1>
+  <div class="filters">
+    <button data-f="pending" class="on">Pendientes</button>
+    <button data-f="all">Todas</button>
+  </div>
+</header>
+
+<section class="engine" id="engine">
+  <div class="row">
+    <div>
+      <b id="engTitle">Whisper (local)</b> <span class="pill" id="engPill">no descargado</span>
+      <small id="engSub">Transcribe en tu móvil, sin enviar audio. Descarga única ~80–150 MB (mejor con WiFi).</small>
+    </div>
+    <button id="dlBtn">Descargar</button>
+  </div>
+  <div class="bar" id="bar"><i id="barFill"></i></div>
+</section>
+
+<main id="list"></main>
+
+<div class="toast" id="toast" role="status"><span>Nota borrada</span><button id="undo">Deshacer</button></div>
+
+<div class="dock">
+  <div class="compose">
+    <textarea id="input" rows="1" placeholder="Habla o escribe…"></textarea>
+    <button class="save" id="save" disabled>Guardar</button>
+  </div>
+  <button class="mic" id="mic" aria-label="Dictar">
+    <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+  </button>
+  <div class="hint" id="hint">Toca para dictar</div>
+</div>
+
+<script>
+/* ---------- Notas ---------- */
+const KEY = 'notavoz.notes.v1';
+const MODEL_FLAG = 'notavoz.whisper.ok';
+let notes = load();
+let filter = 'pending';
+
+const $ = id => document.getElementById(id);
+const input = $('input'), saveBtn = $('save'), micBtn = $('mic'), hint = $('hint'), list = $('list');
+
+function load(){
+  try{
+    // La app se llamaba "Apunta": recuperamos las notas guardadas con el nombre antiguo
+    if(!localStorage.getItem(KEY) && localStorage.getItem('apunta.notes.v1')){
+      localStorage.setItem(KEY, localStorage.getItem('apunta.notes.v1'));
+      if(localStorage.getItem('apunta.whisper.ok')) localStorage.setItem(MODEL_FLAG, localStorage.getItem('apunta.whisper.ok'));
+    }
+    return JSON.parse(localStorage.getItem(KEY)) || [];
+  }catch(e){ return []; }
+}
+function persist(){ try{ localStorage.setItem(KEY, JSON.stringify(notes)); }catch(e){} }
+function flag(get, val){ try{ return get ? localStorage.getItem(MODEL_FLAG) : localStorage.setItem(MODEL_FLAG, val); }catch(e){ return null; } }
+
+function dayLabel(ts){
+  const d = new Date(ts), t = new Date();
+  const start = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((start(t) - start(d)) / 864e5);
+  if(diff === 0) return 'Hoy';
+  if(diff === 1) return 'Ayer';
+  return d.toLocaleDateString('es-ES', {weekday:'long', day:'numeric', month:'long'});
+}
+
+function render(){
+  const shown = notes.filter(n => filter === 'all' || !n.done).sort((a,b) => b.ts - a.ts);
+  if(!shown.length){ list.innerHTML = `<p class="empty">${filter==='pending' ? 'Nada pendiente 👌' : 'Sin notas todavía'}</p>`; return; }
+  let html = '', last = '';
+  for(const n of shown){
+    const lbl = dayLabel(n.ts);
+    if(lbl !== last){ html += `<div class="day">${lbl}</div>`; last = lbl; }
+    const time = new Date(n.ts).toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
+    html += `<div class="note ${n.done?'done':''}" data-id="${n.id}">
+      <button class="chk" data-act="toggle" aria-label="Hecho"></button>
+      <div class="body"><div class="text"></div><div class="time">${time}</div></div>
+      <button class="del" data-act="del" aria-label="Borrar">×</button></div>`;
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('.note').forEach(el => {
+    el.querySelector('.text').textContent = notes.find(n => n.id === el.dataset.id).text;
+  });
+}
+
+list.addEventListener('click', e => {
+  const act = e.target.dataset.act; if(!act) return;
+  const id = e.target.closest('.note').dataset.id;
+  if(act === 'toggle'){ const n = notes.find(n => n.id === id); n.done = !n.done; }
+  if(act === 'del'){ const n = notes.find(n => n.id === id); notes = notes.filter(n => n.id !== id); showUndo(n); }
+  persist(); render();
+});
+
+/* Deshacer borrado */
+const toast = $('toast');
+let undoNote = null, undoTimer = null;
+function showUndo(n){
+  undoNote = n; toast.classList.add('show');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => { toast.classList.remove('show'); undoNote = null; }, 5000);
+}
+$('undo').onclick = () => {
+  if(undoNote){ notes.push(undoNote); persist(); render(); }
+  undoNote = null; clearTimeout(undoTimer); toast.classList.remove('show');
+};
+
+// Pide al navegador que no borre las notas (p. ej. Safari tras 7 días sin uso)
+function askPersist(){ try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){} }
+
+document.querySelectorAll('.filters button').forEach(b => b.onclick = () => {
+  filter = b.dataset.f;
+  document.querySelectorAll('.filters button').forEach(x => x.classList.toggle('on', x === b));
+  render();
+});
+
+function autosize(){ input.style.height = 'auto'; input.style.height = input.scrollHeight + 'px'; saveBtn.disabled = !input.value.trim(); }
+input.addEventListener('input', autosize);
+
+function setHint(t){ hint.textContent = t; }
+function idleHint(){ setHint(input.value.trim() ? 'Revisa y pulsa Guardar' : 'Toca para dictar'); }
+
+function saveNote(){
+  const text = input.value.trim(); if(!text) return;
+  notes.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2,6), text, ts: Date.now(), done: false });
+  persist(); askPersist(); input.value = ''; autosize(); render();
+  setHint('Guardada ✓'); setTimeout(() => { if(state === 'idle') idleHint(); }, 1500);
+}
+saveBtn.onclick = saveNote;
+
+function appendText(t){
+  if(!t) return;
+  input.value = (input.value.trim() + ' ' + t).trim();
+  autosize();
+}
+
+/* ---------- Whisper (worker) ---------- */
+let worker = null, whisperReady = false, loading = false;
+const files = {};
+const engTitle = $('engTitle'), engPill = $('engPill'), engSub = $('engSub'), dlBtn = $('dlBtn'), bar = $('bar'), barFill = $('barFill');
+
+function startWhisper(){
+  if(worker || loading) return;
+  loading = true;
+  dlBtn.style.display = 'none';
+  bar.style.display = 'block';
+  engPill.textContent = 'cargando…';
+  engSub.textContent = 'Preparando el modelo. Mientras tanto puedes usar el dictado normal.';
+  worker = new Worker('worker.js', {type:'module'});
+  worker.onmessage = onWorker;
+  worker.onerror = e => failWhisper(e.message || 'Error al iniciar Whisper');
+  worker.postMessage({type:'load'});
+}
+
+function onWorker(e){
+  const m = e.data;
+  if(m.type === 'progress' && m.data.status === 'progress' && m.data.total){
+    files[m.data.file] = m.data;
+    let loaded = 0, total = 0;
+    for(const f of Object.values(files)){ loaded += f.loaded; total += f.total; }
+    const pct = Math.round(loaded / total * 100);
+    barFill.style.width = pct + '%';
+    engSub.textContent = `Descargando… ${(loaded/1048576).toFixed(0)} / ${(total/1048576).toFixed(0)} MB`;
+  }
+  if(m.type === 'ready'){
+    whisperReady = true; loading = false;
+    flag(false, '1');
+    askPersist(); // así el navegador tampoco borra el modelo
+    bar.style.display = 'none';
+    engPill.textContent = 'listo · local'; engPill.classList.add('local');
+    engSub.textContent = m.device === 'webgpu' ? 'Usando la gráfica del móvil (WebGPU). Nada sale del dispositivo.' : 'Usando la CPU (WASM). Nada sale del dispositivo.';
+    setTimeout(() => { if(whisperReady) $('engine').style.display = 'none'; }, 2500);
+  }
+  if(m.type === 'result'){
+    appendText(cleanHallucinations(m.text));
+    state = 'idle'; micBtn.classList.remove('busy'); idleHint();
+  }
+  if(m.type === 'error'){
+    if(!whisperReady) failWhisper(m.message);
+    else { state = 'idle'; micBtn.classList.remove('busy'); setHint('Error al transcribir. Prueba otra vez.'); }
+  }
+}
+
+function failWhisper(msg){
+  // Volvemos al dictado del navegador hasta que se reintente
+  if(worker) worker.terminate();
+  loading = false; worker = null; whisperReady = false;
+  if(state === 'busy'){ state = 'idle'; micBtn.classList.remove('busy'); }
+  $('engine').style.display = '';
+  bar.style.display = 'none';
+  engPill.classList.remove('local');
+  engPill.textContent = 'error';
+  engSub.textContent = 'No se pudo cargar Whisper (' + msg + '). Se usará el dictado normal.';
+  dlBtn.textContent = 'Reintentar'; dlBtn.style.display = '';
+}
+
+// Whisper a veces "inventa" frases con silencio; las quitamos.
+// Las coletillas de YouTube solo se quitan al final, para no tocar frases reales
+// como "gracias por ver esto".
+function cleanHallucinations(t){
+  const tail = /[\s,.]*(gracias por ver(lo|nos)?( el v[ií]deo)?|suscr[ií]bete( al canal)?)[\s.!¡]*$/i;
+  t = t.replace(/subt[ií]tulos? (realizados |creados |hechos )?por la comunidad de amara\.org\.?/gi, '');
+  let prev;
+  do { prev = t; t = t.replace(tail, ''); } while(t !== prev);
+  return t.replace(/\s+/g, ' ').trim();
+}
+
+dlBtn.onclick = startWhisper;
+
+// ¿Siguen los archivos del modelo en la caché de transformers.js?
+// true = sí, false = no, null = no se puede saber
+async function modelCached(){
+  try{
+    if(!('caches' in window)) return null;
+    const keys = (await (await caches.open('transformers-cache')).keys()).map(r => r.url);
+    const has = part => keys.some(u => u.includes('whisper-base') && u.includes(part));
+    return has('encoder_model') && has('decoder_model_merged');
+  }catch(e){ return null; }
+}
+
+(async () => {
+  if(!IS_MOBILE || flag(true) !== '1') return; // en ordenador no se carga el modelo
+  if(await modelCached()){ startWhisper(); return; } // está en caché: carga sin red
+  // El navegador borró el modelo: no lo bajamos otra vez sin preguntar
+  flag(false, '0');
+  const mobileData = navigator.connection && (navigator.connection.type === 'cellular' || navigator.connection.saveData);
+  engPill.textContent = 'borrado de la caché';
+  engSub.textContent = 'El navegador eliminó el modelo para liberar espacio. Volver a descargarlo ocupa ~80–150 MB'
+    + (mobileData ? ' y parece que estás con datos móviles.' : ' (mejor con WiFi).');
+  dlBtn.textContent = 'Volver a descargar';
+})();
+
+/* ---------- Grabación ---------- */
+let state = 'idle'; // idle | rec | busy
+let mediaRec = null, chunks = [], stream = null, recStart = 0, timer = null;
+
+async function startWhisperRec(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1, echoCancellation:true, noiseSuppression:true}});
+  }catch(e){ recMode = null; setHint('Permiso de micrófono denegado'); return; }
+  chunks = [];
+  mediaRec = new MediaRecorder(stream);
+  mediaRec.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
+  mediaRec.onstop = processAudio;
+  mediaRec.start();
+  state = 'rec'; recStart = Date.now();
+  micBtn.classList.add('rec');
+  timer = setInterval(() => {
+    const s = Math.floor((Date.now() - recStart) / 1000);
+    setHint(`Escuchando… ${Math.floor(s/60)}:${String(s%60).padStart(2,'0')} · toca para parar`);
+  }, 250);
+}
+
+function stopWhisperRec(){
+  clearInterval(timer);
+  micBtn.classList.remove('rec');
+  mediaRec.stop();
+  stream.getTracks().forEach(t => t.stop());
+}
+
+async function processAudio(){
+  const dur = Date.now() - recStart;
+  const blob = new Blob(chunks, {type: mediaRec.mimeType});
+  chunks = []; // el audio solo vive en memoria y se descarta
+  recMode = null;
+  if(dur < 600){ state = 'idle'; idleHint(); return; }
+  if(!worker || !whisperReady){ state = 'idle'; setHint('Whisper no está disponible. Toca para usar el dictado normal.'); return; }
+  state = 'busy'; micBtn.classList.add('busy'); setHint('Transcribiendo…');
+  let ctx = null;
+  try{
+    ctx = new (window.AudioContext || window.webkitAudioContext)({sampleRate:16000});
+    const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const audio = buf.getChannelData(0).slice();
+    worker.postMessage({type:'transcribe', audio}, [audio.buffer]);
+  }catch(e){
+    state = 'idle'; micBtn.classList.remove('busy'); setHint('No se pudo procesar el audio');
+  }finally{
+    if(ctx) ctx.close().catch(() => {});
+  }
+}
+
+/* ---------- Alternativa: dictado del navegador ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let sr = null, srBase = '';
+if(SR){
+  sr = new SR();
+  sr.lang = 'es-ES'; sr.interimResults = true; sr.continuous = false;
+  sr.onresult = e => {
+    let fin = '', interim = '';
+    for(let i = e.resultIndex; i < e.results.length; i++){
+      const r = e.results[i];
+      if(r.isFinal) fin += r[0].transcript; else interim += r[0].transcript;
+    }
+    if(fin) srBase = (srBase + ' ' + fin).trim();
+    input.value = (srBase + ' ' + interim).trim(); autosize();
+  };
+  let srFatal = null;
+  sr.onend = () => {
+    if(state === 'rec' && recMode === 'sr' && !srFatal){ try{ sr.start(); }catch(e){} return; }
+    if(recMode === 'sr'){ state = 'idle'; recMode = null; }
+    micBtn.classList.remove('rec');
+    if(srFatal) setHint(srFatal); else idleHint();
+    srFatal = null;
+  };
+  // Errores que no se arreglan reintentando: paramos en vez de entrar en bucle
+  const SR_FATAL = {
+    'not-allowed': 'Permiso de micrófono denegado',
+    'service-not-allowed': 'Permiso de micrófono denegado',
+    'network': 'El dictado del navegador necesita conexión',
+    'audio-capture': 'No se encuentra el micrófono',
+    'language-not-supported': 'Dictado en español no disponible'
+  };
+  sr.onerror = e => { if(SR_FATAL[e.error]) srFatal = SR_FATAL[e.error]; };
+}
+
+let recMode = null; // 'sr' | 'whisper' mientras se graba
+
+micBtn.onclick = () => {
+  if(state === 'busy') return;
+  // Si ya grabamos, paramos con el mismo motor con el que empezamos
+  if(state === 'rec'){
+    if(recMode === 'whisper') stopWhisperRec();
+    else { state = 'idle'; sr.stop(); }
+    return;
+  }
+  if(whisperReady){ recMode = 'whisper'; startWhisperRec(); return; }
+  if(!sr){ setHint('Usa el micro del teclado mientras carga Whisper'); return; }
+  srBase = input.value.trim(); state = 'rec'; recMode = 'sr';
+  micBtn.classList.add('rec'); setHint('Escuchando (dictado del navegador)… toca para parar');
+  try{ sr.start(); }catch(e){}
+};
+
+render();
+
+/* ---------- Sin conexión ---------- */
+if('serviceWorker' in navigator && location.protocol !== 'file:'){
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
